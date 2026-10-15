@@ -1,0 +1,61 @@
+# Databricks Asset Bundle: deploys the pipeline notebooks and the 8-task workflow.
+#   databricks bundle validate --var cluster_id=<id>
+#   databricks bundle deploy   --var cluster_id=<id>
+#   databricks bundle run wb_outcome_pipeline --var cluster_id=<id>
+bundle:
+  name: worldbank-outcome-databricks
+
+variables:
+  cluster_id:
+    description: Existing all-purpose cluster to run on (single node, Databricks Runtime 18 LTS ML, Dedicated access mode)
+
+targets:
+  dev:
+    mode: development   # prefixes resource names with [dev <user>] and keeps schedules paused
+    default: true
+
+resources:
+  jobs:
+    wb_outcome_pipeline:
+      name: wb-outcome-pipeline
+      description: "World Bank project outcome predictor: ingest -> silver -> gold -> train (3 feature sets) -> compare -> register @champion + batch score."
+      max_concurrent_runs: 1
+      timeout_seconds: 14400
+      schedule:
+        quartz_cron_expression: "0 0 6 1 1,4,7,10 ?"   # 06:00 UTC on the 1st of each quarter
+        timezone_id: UTC
+        pause_status: PAUSED
+      tags:
+        project: wb-outcome
+      tasks:
+        - task_key: ingest
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/01_ingest.py}
+        - task_key: ingest_docs
+          depends_on: [{task_key: ingest}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/01b_ingest_docs.py}
+        - task_key: structured_silver
+          depends_on: [{task_key: ingest}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/02_structured_silver.py}
+        - task_key: unstructured_silver
+          depends_on: [{task_key: ingest_docs}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/03_unstructured_silver.py}
+        - task_key: gold_features
+          depends_on: [{task_key: structured_silver}, {task_key: unstructured_silver}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/04_gold_features.py}
+        - task_key: train
+          depends_on: [{task_key: gold_features}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/05_train.py}
+        - task_key: compare
+          depends_on: [{task_key: train}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/06_compare.py}
+        - task_key: deploy
+          depends_on: [{task_key: compare}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/07_deploy.py}
