@@ -1,0 +1,30 @@
+flowchart LR
+  subgraph SRC["World Bank APIs"]
+    A1["IEG ratings"]
+    A2["Projects API v3"]
+    A3["Indicators API<br/>WDI + WGI"]
+    A4["Documents API<br/>PAD / SAR / PID"]
+  end
+  subgraph BR["Bronze: raw"]
+    B1["ieg_ratings"]
+    B2["projects"]
+    B3["indicators"]
+    B4["doc_metadata<br/>doc_manifest"]
+    B5[("raw_docs volume<br/>8,318 .txt files")]
+  end
+  subgraph SI["Silver: clean, leakage-safe"]
+    S1["labels"]
+    S2["projects"]
+    S3["country_year"]
+    S4["doc_text_features"]
+    S5["doc_chunks<br/>doc_embeddings"]
+  end
+  subgraph GO["Gold: model-ready"]
+    G1["project_features<br/>1 row per project"]
+  end
+  A1 --> B1 --> S1 --> G1
+  A2 --> B2 --> S2 --> G1
+  A3 --> B3 --> S3 --> G1
+  A4 --> B4 --> B5
+  B5 --> S4 --> G1
+  B5 --> S5 --> G1

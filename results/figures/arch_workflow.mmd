@@ -1,0 +1,13 @@
+flowchart LR
+  ingest["ingest"]
+  ingest_docs["ingest_docs"]
+  unstructured_silver["unstructured_silver"]
+  structured_silver["structured_silver"]
+  gold_features["gold_features"]
+  train["train"]
+  compare["compare"]
+  deploy["deploy"]
+  report["report"]
+  ingest --> ingest_docs --> unstructured_silver --> gold_features
+  ingest --> structured_silver --> gold_features
+  gold_features --> train --> compare --> deploy --> report

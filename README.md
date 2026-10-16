@@ -107,71 +107,15 @@ Modelled population: 7,002 rated projects approved FY1995+ (train FY1995–2011,
 
 **Data flow:** a medallion layout on Delta Lake, governed by Unity Catalog (catalog `dbw_wb_outcome`).
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
-flowchart LR
-  subgraph SRC["World Bank APIs"]
-    A1["IEG ratings"]
-    A2["Projects API v3"]
-    A3["Indicators API<br/>WDI + WGI"]
-    A4["Documents API<br/>PAD / SAR / PID"]
-  end
-  subgraph BR["Bronze: raw"]
-    B1["ieg_ratings"]
-    B2["projects"]
-    B3["indicators"]
-    B4["doc_metadata<br/>doc_manifest"]
-    B5[("raw_docs volume<br/>8,318 .txt files")]
-  end
-  subgraph SI["Silver: clean, leakage-safe"]
-    S1["labels"]
-    S2["projects"]
-    S3["country_year"]
-    S4["doc_text_features"]
-    S5["doc_chunks<br/>doc_embeddings"]
-  end
-  subgraph GO["Gold: model-ready"]
-    G1["project_features<br/>1 row per project"]
-  end
-  A1 --> B1 --> S1 --> G1
-  A2 --> B2 --> S2 --> G1
-  A3 --> B3 --> S3 --> G1
-  A4 --> B4 --> B5
-  B5 --> S4 --> G1
-  B5 --> S5 --> G1
-```
+![Data flow: World Bank APIs to bronze, silver and gold tables](results/figures/arch_data_flow.png)
 
 **Model and outputs:**
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
-flowchart LR
-  G1["gold.project_features"] --> T["05 train<br/>XGBoost + Optuna<br/>3 feature sets"]
-  T --> MF[("MLflow<br/>runs, plots, models")]
-  T --> C["06 compare<br/>paired bootstrap"]
-  C --> D["07 deploy<br/>UC model @champion"]
-  D --> SC["gold.active_project_scores<br/>2,505 projects"]
-  D --> R["08 report<br/>REPORT.md + 14 charts"]
-```
+![Model and outputs: training, comparison, deployment and report](results/figures/arch_model_outputs.png)
 
 **Workflow** (`databricks.yml`, 9 tasks on one cluster):
 
-```mermaid
-%%{init: {"flowchart": {"htmlLabels": false}}}%%
-flowchart LR
-  ingest["ingest"]
-  ingest_docs["ingest_docs"]
-  unstructured_silver["unstructured_silver"]
-  structured_silver["structured_silver"]
-  gold_features["gold_features"]
-  train["train"]
-  compare["compare"]
-  deploy["deploy"]
-  report["report"]
-  ingest --> ingest_docs --> unstructured_silver --> gold_features
-  ingest --> structured_silver --> gold_features
-  gold_features --> train --> compare --> deploy --> report
-```
+![Workflow: the 9 tasks of the Databricks job](results/figures/arch_workflow.png)
 
 ## Leakage controls
 

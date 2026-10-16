@@ -1,0 +1,7 @@
+flowchart LR
+  G1["gold.project_features"] --> T["05 train<br/>XGBoost + Optuna<br/>3 feature sets"]
+  T --> MF[("MLflow<br/>runs, plots, models")]
+  T --> C["06 compare<br/>paired bootstrap"]
+  C --> D["07 deploy<br/>UC model @champion"]
+  D --> SC["gold.active_project_scores<br/>2,505 projects"]
+  D --> R["08 report<br/>REPORT.md + 14 charts"]
