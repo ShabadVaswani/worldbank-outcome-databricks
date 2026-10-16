@@ -109,28 +109,28 @@ Modelled population: 7,002 rated projects approved FY1995+ (train FY1995–2011,
 
 ```mermaid
 flowchart LR
-  subgraph SRC["World Bank APIs"]
-    A1["IEG ratings"]
-    A2["Projects API v3"]
-    A3["Indicators API<br/>WDI + WGI"]
-    A4["Documents API<br/>PAD / SAR / PID"]
+  subgraph SRC["World Bank APIs#nbsp;#nbsp;"]
+    A1["IEG ratings#nbsp;#nbsp;"]
+    A2["Projects API v3#nbsp;#nbsp;"]
+    A3["Indicators API#nbsp;#nbsp;<br/>WDI + WGI#nbsp;#nbsp;"]
+    A4["Documents API#nbsp;#nbsp;<br/>PAD / SAR / PID#nbsp;#nbsp;"]
   end
-  subgraph BR["Bronze: raw"]
-    B1["ieg_ratings"]
-    B2["projects"]
-    B3["indicators"]
-    B4["doc_metadata<br/>doc_manifest"]
-    B5[("raw_docs volume<br/>8,318 .txt files")]
+  subgraph BR["Bronze: raw#nbsp;#nbsp;"]
+    B1["ieg_ratings#nbsp;#nbsp;"]
+    B2["projects#nbsp;#nbsp;"]
+    B3["indicators#nbsp;#nbsp;"]
+    B4["doc_metadata#nbsp;#nbsp;<br/>doc_manifest#nbsp;#nbsp;"]
+    B5[("raw_docs volume#nbsp;#nbsp;<br/>8,318 .txt files#nbsp;#nbsp;")]
   end
-  subgraph SI["Silver: clean, leakage-safe"]
-    S1["labels"]
-    S2["projects"]
-    S3["country_year"]
-    S4["doc_text_features"]
-    S5["doc_chunks<br/>doc_embeddings"]
+  subgraph SI["Silver: clean, leakage-safe#nbsp;#nbsp;"]
+    S1["labels#nbsp;#nbsp;"]
+    S2["projects#nbsp;#nbsp;"]
+    S3["country_year#nbsp;#nbsp;"]
+    S4["doc_text_features#nbsp;#nbsp;"]
+    S5["doc_chunks#nbsp;#nbsp;<br/>doc_embeddings#nbsp;#nbsp;"]
   end
-  subgraph GO["Gold: model-ready"]
-    G1["project_features<br/>1 row per project"]
+  subgraph GO["Gold: model-ready#nbsp;#nbsp;"]
+    G1["project_features#nbsp;#nbsp;<br/>1 row per project#nbsp;#nbsp;"]
   end
   A1 --> B1 --> S1 --> G1
   A2 --> B2 --> S2 --> G1
@@ -144,18 +144,27 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  G1["gold.project_features"] --> T["05 train<br/>XGBoost + Optuna<br/>3 feature sets"]
-  T --> MF[("MLflow<br/>runs, plots, models")]
-  T --> C["06 compare<br/>paired bootstrap"]
-  C --> D["07 deploy<br/>UC model @champion"]
-  D --> SC["gold.active_project_scores<br/>2,505 projects"]
-  D --> R["08 report<br/>REPORT.md + 14 charts"]
+  G1["gold.project_features#nbsp;#nbsp;"] --> T["05 train#nbsp;#nbsp;<br/>XGBoost + Optuna#nbsp;#nbsp;<br/>3 feature sets#nbsp;#nbsp;"]
+  T --> MF[("MLflow#nbsp;#nbsp;<br/>runs, plots, models#nbsp;#nbsp;")]
+  T --> C["06 compare#nbsp;#nbsp;<br/>paired bootstrap#nbsp;#nbsp;"]
+  C --> D["07 deploy#nbsp;#nbsp;<br/>UC model @champion#nbsp;#nbsp;"]
+  D --> SC["gold.active_project_scores#nbsp;#nbsp;<br/>2,505 projects#nbsp;#nbsp;"]
+  D --> R["08 report#nbsp;#nbsp;<br/>REPORT.md + 14 charts#nbsp;#nbsp;"]
 ```
 
 **Workflow** (`databricks.yml`, 9 tasks on one cluster):
 
 ```mermaid
 flowchart LR
+  ingest["ingest#nbsp;#nbsp;"]
+  ingest_docs["ingest_docs#nbsp;#nbsp;"]
+  unstructured_silver["unstructured_silver#nbsp;#nbsp;"]
+  structured_silver["structured_silver#nbsp;#nbsp;"]
+  gold_features["gold_features#nbsp;#nbsp;"]
+  train["train#nbsp;#nbsp;"]
+  compare["compare#nbsp;#nbsp;"]
+  deploy["deploy#nbsp;#nbsp;"]
+  report["report#nbsp;#nbsp;"]
   ingest --> ingest_docs --> unstructured_silver --> gold_features
   ingest --> structured_silver --> gold_features
   gold_features --> train --> compare --> deploy --> report
