@@ -19,7 +19,7 @@
 # MAGIC **What this means**
 # MAGIC 1. Approval-day information predicts outcomes only modestly (AUC ≈ 0.60). That's expected: outcomes are largely decided *during* implementation, which an approval-day model can't see.
 # MAGIC 2. **Text alone carries real signal** (AUC 0.58, PR-AUC 0.267 vs 0.200 random), and the TF-IDF model's words are interpretable — "civil service", "institutional framework", "private sector", "HIV/AIDS" lean toward failure; "roads", "rural", "maintenance", "emergency" toward success (institutional-reform projects are known to be harder than infrastructure).
-# MAGIC 3. But that signal is **largely redundant** with structured data (sector, region, country track record): combining them doesn't help.
+# MAGIC 3. But it mostly carries the **same information** as the structured data (sector, region, country track record), so combining them doesn't help. That makes text a **substitute, not an add-on**. It isn't useless: on its own it's almost as good at finding failures (PR-AUC 0.267 vs 0.269), and it may matter most where structured data is thin (untested here).
 # MAGIC 4. Strongest structured drivers (SHAP): region and country **track record**, **preparation time**, project size, GDP growth.
 # MAGIC 5. The deployed champion (`ml.project_outcome_xgb@champion`, chosen by validation AUC) is the structured model; it ranks 2,505 active projects into `gold.active_project_scores`, top 20% flagged High risk.
 
