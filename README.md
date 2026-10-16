@@ -4,6 +4,26 @@
 
 An end-to-end ML pipeline on **Azure Databricks** that combines structured data (project attributes, country macro and governance indicators) with unstructured data (the text of ~8,300 pre-approval project documents) to predict the Independent Evaluation Group (IEG) outcome rating. Built with Delta Lake, Unity Catalog, MLflow, XGBoost, and Databricks Workflows.
 
+## In one minute
+
+- **The model's risk ranking works:** on projects it never saw (approved 2012 or later), the **riskiest 10% failed about 3× as often as the safest 10% (32% vs 11%)**, and the riskiest 20% contain 27.5% of all failures. That is the practical use: tell reviewers which new projects to watch first.
+- **Overall accuracy is modest (test AUC 0.60), by nature of the problem:** outcomes are decided over 5–8 years of implementation that an approval-day model can't see.
+- **Text vs structured (the main question):** the pre-approval documents predict outcomes on their own (AUC 0.58), but add nothing significant on top of project + country data (paired bootstrap −0.013, 95% CI [−0.032, +0.007]).
+- **Rigor:** three problems caught and fixed before the final numbers — a "significant" text gain that was really tuning noise, a stacking leak through out-of-fold scores, and a broken readability feature ([details](#how-the-result-evolved-and-why-these-numbers-are-trustworthy)).
+- **Platform:** bronze/silver/gold Delta tables in Unity Catalog → XGBoost + Optuna tracked in MLflow → model registered in Unity Catalog with alias `@champion` → batch scores for 2,505 active projects, all as one scheduled Workflow / Asset Bundle.
+
+![Failure rate by risk decile](results/figures/b4_risk_deciles.png)
+
+## Why Azure Databricks rather than Free Edition
+
+I deliberately built this on **Azure Databricks (Premium trial)** to show a real cloud deployment — my own workspace, Unity Catalog, a dedicated cluster, a scheduled Workflow, and a Unity Catalog model registry — running entirely on trial credits (a single 4-core node that switches itself off after 10 idle minutes).
+
+It can't run unchanged on **Databricks Free Edition**, for two reasons from the [Free Edition limitations](https://learn.microsoft.com/azure/databricks/getting-started/free-edition-limitations):
+- Free Edition is **serverless-only** — no custom/dedicated clusters, while this workflow runs on a dedicated single-node Databricks Runtime ML cluster.
+- Free Edition **restricts outbound internet to a limited set of trusted domains**, and this pipeline calls four World Bank APIs and downloads the embedding model from Hugging Face.
+
+Porting to Free Edition would mean switching tasks to serverless compute with a declared environment (pip packages) and pre-loading the source data and model into a volume.
+
 ## Results
 
 Test set = **2,217 projects approved FY2012 or later**, never used for training or tuning. Each model is the average of 3 independently tuned XGBoost models.
@@ -29,7 +49,7 @@ All charts are produced by [`notebooks/08_results_report.py`](notebooks/08_resul
 
 | | |
 |---|---|
-| ![Model comparison](results/figures/b1_model_comparison.png) | ![Risk deciles](results/figures/b4_risk_deciles.png) |
+| ![Model comparison](results/figures/b1_model_comparison.png) | ![Calibration](results/figures/b3_calibration.png) |
 | ![ROC and PR curves](results/figures/b2_roc_pr_curves.png) | ![SHAP importance](results/figures/b5_shap_importance.png) |
 
 <details>
@@ -45,9 +65,8 @@ All charts are produced by [`notebooks/08_results_report.py`](notebooks/08_resul
 </details>
 
 <details>
-<summary><b>More results</b> — calibration, TF-IDF terms, active-project risk</summary>
+<summary><b>More results</b> — TF-IDF terms, active-project risk</summary>
 
-![Calibration](results/figures/b3_calibration.png)
 ![TF-IDF terms](results/figures/b6_tfidf_terms.png)
 ![Active project risk](results/figures/c1_active_risk.png)
 </details>
@@ -156,6 +175,24 @@ databricks.yml               Asset Bundle: 9-task workflow (schedule paused)
 - 1990s Staff Appraisal Reports are OCR text with noise; regional projects have no single country for macro features.
 - Embeddings cover ~1,600 words per document (CPU budget).
 - No implementation-time signals by design — a natural extension is a "during implementation" model using supervision ratings and disbursement speed.
+
+## Next steps
+
+**1. Extend with LLMs (the documents are already chunked and embedded in `silver.doc_chunks` / `silver.doc_embeddings`)**
+- **LLM risk-factor extraction → new features.** Have an LLM read each pre-approval document and return structured JSON: stated overall risk rating, top named risks, implementing-agency capacity concerns, number of components, design complexity. These become new columns in `gold.project_features`, tested with the same ablation and paired bootstrap. Still leakage-safe, because only pre-approval documents are read. Roughly 8,300 documents × ~6k tokens ≈ 50M input tokens, which is cheap with a small model via batch inference (`ai_query`).
+- **RAG question-answering over the documents.** "Which approved projects describe weak procurement capacity in fragile states?" Retrieve from the existing chunk embeddings (Databricks AI Search, formerly Vector Search, or FAISS), answer only from retrieved passages, cite the document and project ID, and say "not found" when there's no evidence. Evaluate groundedness with MLflow's GenAI evaluation (LLM-as-judge) on a small labelled question set.
+- **Reviewer notes for flagged projects.** For each High-risk active project, an LLM turns its top SHAP drivers plus the extracted risks into a 3-sentence "why this was flagged" note, so the score comes with a reason a person can check.
+
+**2. Use the pre-1995 history (~5,500 more rated projects).** The ratings, project data and macro data are already in bronze; only gold filters them out. Run it as an experiment, not a default: add FY1975–1994 to training (structured features first, since there are no governance scores before 1996 and the scanned documents are noisy), keep the FY2012+ test set unchanged, and keep it only if test AUC improves. Older projects may teach patterns that no longer hold. An LLM or vision-model re-read of the scanned documents could then make their text usable too.
+
+**3. A during-implementation model.** Predict again around year 2 using the Implementation Status and Results reports (supervision ratings), disbursement pace and closing-date extensions. Expect a much higher AUC; it answers a different question ("which running projects need rescue?").
+
+**4. Production hardening**
+- Run tasks on job clusters or serverless jobs instead of an all-purpose cluster (cheaper per hour, no idle time).
+- Add a **champion/challenger gate**: only move `@champion` if the new model beats the current one on a held-out recent window.
+- Add **Lakehouse Monitoring** on `gold.project_features` and the score distribution to catch data drift and changes in the source APIs.
+- Turn the leakage rules into **tests**, e.g. assert every document date ≤ approval date and that no post-approval column reaches gold. Run them plus `databricks bundle validate` in CI on every push.
+- Try an ordinal model on the full 6-point rating instead of the binary label.
 
 ## Tech stack
 
