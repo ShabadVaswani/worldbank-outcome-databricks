@@ -8,7 +8,7 @@ An end-to-end ML pipeline on **Azure Databricks** that combines structured data 
 
 - **The model's risk ranking works:** on projects it never saw (approved 2012 or later), the **riskiest 10% failed about 3× as often as the safest 10% (32% vs 11%)**, and the riskiest 20% contain 27.5% of all failures. That is the practical use: tell reviewers which new projects to watch first.
 - **Overall accuracy is modest (test AUC 0.60), by nature of the problem:** outcomes are decided over 5–8 years of implementation that an approval-day model can't see.
-- **Text vs structured (the main question):** the pre-approval documents predict outcomes on their own (AUC 0.58), but add nothing significant on top of project + country data (paired bootstrap −0.013, 95% CI [−0.032, +0.007]).
+- **Text vs structured (the main question):** the pre-approval documents predict outcomes on their own (AUC 0.58; almost as good as structured data at finding failures), but they mostly carry the *same* information as project + country data, so combining the two gives no significant gain (paired bootstrap −0.013, 95% CI [−0.032, +0.007]).
 - **Rigor:** three problems caught and fixed before the final numbers — a "significant" text gain that was really tuning noise, a stacking leak through out-of-fold scores, and a broken readability feature ([details](#how-the-result-evolved-and-why-these-numbers-are-trustworthy)).
 - **Platform:** bronze/silver/gold Delta tables in Unity Catalog → XGBoost + Optuna tracked in MLflow → model registered in Unity Catalog with alias `@champion` → batch scores for 2,505 active projects, all as one scheduled Workflow / Asset Bundle.
 
@@ -40,7 +40,11 @@ Paired bootstrap, combined − structured: **−0.013 AUC, 95% CI [−0.032, +0.
 - Approval-day information predicts outcomes only modestly (AUC ≈ 0.60). That's expected: outcomes are largely decided during implementation, which an approval-day model can't see.
 - **The ranking is still useful:** the 20% of test projects the champion rates riskiest fail **1.37× as often** as average and contain **27.5%** of all failures (failure rate rises from 11% in the safest decile to 32% in the riskiest).
 - **The document text carries real signal on its own** (AUC 0.58; PR-AUC 0.267 vs 0.200 random), and it's interpretable: "civil service", "institutional framework", "private sector", "HIV/AIDS" lean toward failure; "roads", "rural", "maintenance", "emergency" toward success.
-- **But it is redundant with the structured data** — adding it to the structured model gives no significant gain.
+- **But it overlaps with the structured data, so it doesn't add on top.** That doesn't make it useless:
+  - On its own it's clearly better than chance, and for *finding failures* it's almost as good as the structured model (PR-AUC 0.267 vs 0.269).
+  - Both sources mostly describe the same things: what kind of project it is, where it is, and how hard the setting is. Once the model knows region, sector and country track record, the words repeat much of that.
+  - So text works as a **substitute**, not an add-on. It may help most where structured data is thin, such as regional projects with no single country, or countries with no track record yet. That's worth testing; I haven't tested those groups here.
+  - It also **explains in human words** what numbers can't ("civil service reform" vs "rural roads").
 - Strongest structured drivers (SHAP): regional and country **track record** of earlier projects, **preparation time**, project size, GDP growth.
 
 ### Visual summary
@@ -101,24 +105,61 @@ Modelled population: 7,002 rated projects approved FY1995+ (train FY1995–2011,
 
 ## Architecture
 
-Medallion layout on Delta Lake, governed by Unity Catalog:
+**Data flow:** a medallion layout on Delta Lake, governed by Unity Catalog (catalog `dbw_wb_outcome`).
 
+```mermaid
+flowchart LR
+  subgraph SRC["World Bank APIs"]
+    A1["IEG ratings"]
+    A2["Projects API v3"]
+    A3["Indicators API<br/>WDI + WGI"]
+    A4["Documents API<br/>PAD / SAR / PID"]
+  end
+  subgraph BR["Bronze: raw"]
+    B1["ieg_ratings"]
+    B2["projects"]
+    B3["indicators"]
+    B4["doc_metadata<br/>doc_manifest"]
+    B5[("raw_docs volume<br/>8,318 .txt files")]
+  end
+  subgraph SI["Silver: clean, leakage-safe"]
+    S1["labels"]
+    S2["projects"]
+    S3["country_year"]
+    S4["doc_text_features"]
+    S5["doc_chunks<br/>doc_embeddings"]
+  end
+  subgraph GO["Gold: model-ready"]
+    G1["project_features<br/>1 row per project"]
+  end
+  A1 --> B1 --> S1 --> G1
+  A2 --> B2 --> S2 --> G1
+  A3 --> B3 --> S3 --> G1
+  A4 --> B4 --> B5
+  B5 --> S4 --> G1
+  B5 --> S5 --> G1
 ```
- SOURCES                         BRONZE (raw)               SILVER (clean, leakage-safe)       GOLD (model-ready)
- IEG ratings API ─────────────▶ ieg_ratings ─────────────▶ labels ──────────────┐
- Projects API v3 ────────────▶ projects ────────────────▶ projects ────────────┤
- Indicators API (WDI + WGI) ──▶ indicators ──────────────▶ country_year ────────┼──▶ project_features (PK project_id)
- Documents API (PAD/SAR/PID) ─▶ doc_metadata, doc_manifest                      │      + feature_groups
-                                raw_docs volume (.txt) ──▶ doc_text_features ───┤
-                                                          doc_chunks, doc_embeddings ┘
 
- 05_train   XGBoost + Optuna (rolling-origin CV) ×3 seeds ×3 feature sets → MLflow
- 06_compare paired bootstrap, ROC / PR curves
- 07_deploy  Unity Catalog model registry, alias @champion → batch scores for active projects
- 08_report  EDA + results charts → gold.reports volume (REPORT.md + figures)
+**Model and outputs:**
+
+```mermaid
+flowchart LR
+  G1["gold.project_features"] --> T["05 train<br/>XGBoost + Optuna<br/>3 feature sets"]
+  T --> MF[("MLflow<br/>runs, plots, models")]
+  T --> C["06 compare<br/>paired bootstrap"]
+  C --> D["07 deploy<br/>UC model @champion"]
+  D --> SC["gold.active_project_scores<br/>2,505 projects"]
+  D --> R["08 report<br/>REPORT.md + 14 charts"]
 ```
 
-Workflow DAG (`databricks.yml`): `ingest → {ingest_docs → unstructured_silver, structured_silver} → gold_features → train → compare → deploy → report`.
+**Workflow** (`databricks.yml`, 9 tasks on one cluster):
+
+```mermaid
+flowchart LR
+  ingest --> ingest_docs --> unstructured_silver --> gold_features
+  ingest --> structured_silver --> gold_features
+  gold_features --> train --> compare --> deploy --> report
+```
 
 ## Leakage controls
 
