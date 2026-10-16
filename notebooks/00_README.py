@@ -11,14 +11,14 @@
 # MAGIC | Model | Validation AUC | **Test AUC** (95% CI) | PR-AUC on failures (random = 0.200) | Brier |
 # MAGIC |---|---|---|---|---|
 # MAGIC | **Structured** (project + country + track record) | 0.613 | **0.602** [0.573, 0.630] | **0.269** | 0.160 |
-# MAGIC | Text (document features, embeddings, TF-IDF score) | 0.582 | 0.578 [0.549, 0.610] | 0.257 | 0.162 |
-# MAGIC | Combined | 0.605 | 0.591 [0.561, 0.621] | 0.255 | 0.162 |
+# MAGIC | Text (document features, embeddings, TF-IDF score) | 0.579 | 0.576 [0.547, 0.607] | 0.267 | 0.162 |
+# MAGIC | Combined | 0.607 | 0.589 [0.559, 0.619] | 0.262 | 0.163 |
 # MAGIC
-# MAGIC Paired bootstrap, combined − structured: **−0.011 AUC, 95% CI [−0.030, +0.008]** → no significant gain from adding text.
+# MAGIC Paired bootstrap, combined − structured: **−0.013 AUC, 95% CI [−0.032, +0.007]** → no significant gain from adding text.
 # MAGIC
 # MAGIC **What this means**
 # MAGIC 1. Approval-day information predicts outcomes only modestly (AUC ≈ 0.60). That's expected: outcomes are largely decided *during* implementation, which an approval-day model can't see.
-# MAGIC 2. **Text alone carries real signal** (AUC 0.58, PR-AUC 0.257 vs 0.200 random), and the TF-IDF model's words are interpretable — "civil service", "institutional framework", "private sector", "HIV/AIDS" lean toward failure; "roads", "rural", "maintenance", "emergency" toward success (institutional-reform projects are known to be harder than infrastructure).
+# MAGIC 2. **Text alone carries real signal** (AUC 0.58, PR-AUC 0.267 vs 0.200 random), and the TF-IDF model's words are interpretable — "civil service", "institutional framework", "private sector", "HIV/AIDS" lean toward failure; "roads", "rural", "maintenance", "emergency" toward success (institutional-reform projects are known to be harder than infrastructure).
 # MAGIC 3. But that signal is **largely redundant** with structured data (sector, region, country track record): combining them doesn't help.
 # MAGIC 4. Strongest structured drivers (SHAP): region and country **track record**, **preparation time**, project size, GDP growth.
 # MAGIC 5. The deployed champion (`ml.project_outcome_xgb@champion`, chosen by validation AUC) is the structured model; it ranks 2,505 active projects into `gold.active_project_scores`, top 20% flagged High risk.
@@ -37,7 +37,8 @@
 # MAGIC | v3 | same code, re-run with 17 extra documents | 0.590 | +0.017 (n.s.) | …but it moved with a trivial data change → **tuning variance**, not signal |
 # MAGIC | v4 | each model = average of 3 independently tuned models | 0.595 | −0.007 (n.s.) | Stable estimate: structured 0.602, text adds nothing |
 # MAGIC | v5 | + supervised TF-IDF text score, *random* out-of-fold | 0.591 | −0.011 (n.s.) | Validation AUC of text models ~0.05 above test → **leak** |
-# MAGIC | **v6 (final)** | out-of-fold made **time-respecting** | 0.591 | −0.011 (n.s.) | Validation ≈ test for every model → leak gone |
+# MAGIC | v6 | out-of-fold made **time-respecting** | 0.591 | −0.011 (n.s.) | Validation ≈ test for every model → leak gone |
+# MAGIC | **v7 (final)** | readability feature fixed (it was a hidden length proxy, values ≈ −20,000) | 0.589 | −0.013 (n.s.) | Plot every feature: the bug was spotted in the `08_results_report` box plot |
 # MAGIC
 # MAGIC Two lessons worth telling in an interview:
 # MAGIC - **A single tuning run can manufacture a "significant" result.** The v2 gain disappeared on a trivial re-run; averaging independently tuned models exposed it.
@@ -85,7 +86,7 @@
 # MAGIC | 6 | `06_compare` | Ablation, ROC vs PR curves, paired bootstrap significance |
 # MAGIC | 7 | `07_deploy` | UC model registry, aliases (`@champion`), batch vs real-time serving |
 # MAGIC
-# MAGIC Where to look: **Catalog** → `dbw_wb_outcome` (tables + Lineage tab) · **Experiments** → `wb-outcome/wb_outcome_experiment` (the latest `xgb_*` runs are final; earlier ones are the versions above) · **Models** → `ml.project_outcome_xgb` (v6 = `@champion`).
+# MAGIC Where to look: **Catalog** → `dbw_wb_outcome` (tables + Lineage tab) · **Experiments** → `wb-outcome/wb_outcome_experiment` (the latest `xgb_*` runs are final; earlier ones are the versions above) · **Models** → `ml.project_outcome_xgb` (v7 = `@champion`) · **Report** → `08_results_report` (14 charts, `REPORT.md` in the `gold.reports` volume).
 
 # COMMAND ----------
 

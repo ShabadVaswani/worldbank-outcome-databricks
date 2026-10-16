@@ -59,3 +59,7 @@ resources:
           depends_on: [{task_key: compare}]
           existing_cluster_id: ${var.cluster_id}
           notebook_task: {notebook_path: ./notebooks/07_deploy.py}
+        - task_key: report
+          depends_on: [{task_key: deploy}]
+          existing_cluster_id: ${var.cluster_id}
+          notebook_task: {notebook_path: ./notebooks/08_results_report.py}

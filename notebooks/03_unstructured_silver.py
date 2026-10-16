@@ -79,7 +79,8 @@ print("documents to process:", len(files))
 # MAGIC
 # MAGIC **Why:**
 # MAGIC - **Rates, not counts:** a 200-page PAD naturally says "risk" more often than a 10-page memo; dividing by length makes documents comparable.
-# MAGIC - **Flesch reading ease** = 206.835 − 1.015 × (words/sentence) − 84.6 × (syllables/word); higher = easier to read. Syllables are estimated by counting vowel groups — rough, but consistent across documents, which is what matters for a feature.
+# MAGIC - **Flesch reading ease** = 206.835 − 1.015 × (words/sentence) − 84.6 × (syllables/word); higher = easier to read (roughly 0–100; dense official prose often scores below 30). Syllables are estimated by counting vowel groups — rough, but consistent across documents, which is what matters for a feature.
+# MAGIC - *Bug fixed in v7:* words/sentence was first computed on punctuation-free tokens, so every document counted as one sentence and the "readability" score was really a length proxy (values near −20,000). Found via the box plot in `08_results_report`.
 # MAGIC - Old documents are OCR'd scans with noise; cleaning keeps the noise from dominating the counts.
 
 # COMMAND ----------
@@ -110,7 +111,8 @@ def process(path):
         "pct_numeric_tokens": sum(t[:1].isdigit() for t in tokens) / n if n else None,
     }
     if sample_words:
-        wps = len(sample_words) / max(1, len(SENT.findall(" ".join(sample_words))))
+        # words per sentence must come from the text WITH punctuation (sample_words has none)
+        wps = feats["avg_sentence_words"]
         spw = sum(syllables(w) for w in sample_words) / len(sample_words)
         feats["flesch_reading_ease"] = 206.835 - 1.015 * wps - 84.6 * spw
     per_k = 1000 / n if n else 0
