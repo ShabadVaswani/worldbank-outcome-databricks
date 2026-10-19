@@ -21,7 +21,7 @@
 # MAGIC **What:** keyword lists, which part of each document to embed, and the embedding model.
 # MAGIC
 # MAGIC **Why:**
-# MAGIC - **Keyword families** are small, readable lists so every feature is explainable (good for SHAP and interviews).
+# MAGIC - **Keyword families** are small, readable lists so every feature is explainable (good for SHAP and for explaining results).
 # MAGIC - **Embedding window:** we skip the first 300 words (cover page, abbreviations, currency tables) and embed the next 8 chunks of 200 words — the strategic context and project description. Embedding whole 100-page documents on a 4-core CPU would take hours for little gain.
 # MAGIC - **Model:** `all-MiniLM-L6-v2` — small (22M parameters), fast on CPU, 384-dim output, and already supported by the preinstalled `sentence-transformers`.
 

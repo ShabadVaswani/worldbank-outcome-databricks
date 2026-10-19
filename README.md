@@ -11,6 +11,7 @@ An end-to-end ML pipeline on **Azure Databricks** that combines structured data 
 - **Text vs structured (the main question):** the pre-approval documents predict outcomes on their own (AUC 0.58; almost as good as structured data at finding failures), but they mostly carry the *same* information as project + country data, so combining the two gives no significant gain (paired bootstrap −0.013, 95% CI [−0.032, +0.007]).
 - **Rigor:** three problems caught and fixed before the final numbers — a "significant" text gain that was really tuning noise, a stacking leak through out-of-fold scores, and a broken readability feature ([details](#how-the-result-evolved-and-why-these-numbers-are-trustworthy)).
 - **Platform:** bronze/silver/gold Delta tables in Unity Catalog → XGBoost + Optuna tracked in MLflow → model registered in Unity Catalog with alias `@champion` → batch scores for 2,505 active projects, all as one scheduled Workflow / Asset Bundle.
+- **LLM extension:** a question-answering assistant over 453 of the project documents that cites a passage for every claim (Vector Search, LLM input guard, citation checks), evaluated on 50 questions (every answer grounded, 38 of 40 fully correct after human review), plus cited "why was this flagged?" notes for the 20 riskiest active projects ([details](#llm-extension-rag-assistant-over-project-documents)).
 
 ![Failure rate by risk decile](results/figures/b4_risk_deciles.png)
 
@@ -130,11 +131,62 @@ Modelled population: 7,002 rated projects approved FY1995+ (train FY1995–2011,
 | Stacking leak | TF-IDF score for training rows from models trained on earlier years only |
 | Tuning on test | Time-based split; rolling-origin CV inside train; champion chosen by validation AUC |
 
+## LLM extension: RAG assistant over project documents
+
+The outcome model says *which* active projects look risky. This extension adds a question-answering assistant over the projects' own pre-approval documents, so a portfolio manager can ask *what the documents say* — with every claim cited to a passage — and get a short "why was this project flagged?" note for the highest-risk projects.
+
+RAG (retrieval-augmented generation): before the language model answers, the most relevant passages ("chunks") are retrieved from an index and given to the model as evidence. The model answers only from that evidence.
+
+```
+pre-approval .txt files ──► 09 clean + sentence-aware chunks ──► silver.rag_chunks (Delta, CDF, text + 1,024-d GTE vectors)
+                                                                   │
+                                   ┌───────────────────────────────┴──────────────────────────────┐
+                    Vector Search Delta Sync index (hybrid: vector + keyword)          FAISS file in a UC volume (vector only)
+                                   └───────────────────────────────┬──────────────────────────────┘
+                                                      rag_common.search()  (same API, automatic fallback)
+                                                                   │
+           rag_assistant_core.ask(): LLM input guard ─► retrieve ─► Qwen 3.5 JSON answer ─► validate/repair ─► citation check
+                                                                   │
+              10 demo (+ MLflow traces) · 11 evaluation (MLflow judges + code checks) · 12 flagged-project notes (SHAP + RAG)
+```
+
+| Notebook | What it does | Main output |
+|---|---|---|
+| `09_rag_index` | measures candidates, chunks 3,777 full documents, selects 453 within a 50,000-chunk budget, embeds them, builds both indexes, smoke-tests retrieval | `silver.rag_chunks`, `gold.rag_chunks_index`, volume `gold.rag_index` |
+| `rag_common` | shared names, `embed_texts()`, `chat()`, metadata filters, `search()` for both backends, FAISS fallback | – |
+| `rag_assistant_core` | input guard, prompts, guardrails and `ask()` used by 10–12 | – |
+| `10_rag_assistant` | demo questions (filters, unanswerable, off-topic, prompt injection), planted-instruction test, traces | MLflow traces |
+| `11_rag_evaluation` | 50-question evaluation: retrieval hit rate/MRR, LLM judges, code checks, thinking on vs off | `gold.rag_eval_set`, `gold.rag_eval_results`, charts in `gold.reports/rag/` |
+| `12_flagged_project_notes` | top-20 risky projects: TreeSHAP drivers + project-filtered retrieval → 3-sentence cited notes, judged for groundedness | `gold.flagged_project_notes` |
+
+### Design choices
+
+- **Full documents, sentence-aware chunks**: ~260 words (≈350 tokens at a measured 1.33 tokens/word), 40-word overlap of whole sentences, new chunk at each detected section heading; a contextual header ("project | country | doc type | section") is embedded with each chunk.
+- **Subset under a budget**: all 323 high-risk active projects first (73% of the 50,000 chunks), then other active and test-period projects stratified by region × sector. Consequence: the index is ~65% African projects.
+- **Self-managed embeddings** (`databricks-gte-large-en`, normalised to unit length) stored in the Delta table: computed once and reused by both backends, so the Vector Search endpoint can be deleted and recreated without re-embedding.
+- **Idempotent**: MERGE keyed on a deterministic `chunk_id`; an unchanged re-run changes 0 rows, embeds 0 chunks and syncs in ~1 minute.
+- **Two backends, one API**: `rag_common.search()` uses the Vector Search index (hybrid) and falls back automatically to the FAISS index in the volume (vector only) when the endpoint is missing or not ready. FAISS and Vector Search vector-only returned identical top-5 results in testing.
+- **Answer model** `databricks-qwen35-122b-a10b` with thinking off (`reasoning_effort="none"`); **input guard** `databricks-meta-llama-3-3-70b-instruct` (fast, non-reasoning); **judge and question generator** `databricks-gpt-oss-120b` (a different model family). Claude endpoints are listed as READY in this workspace but return `PERMISSION_DENIED`, so none is used.
+- **Guardrails**: an LLM input guard before retrieval (JSON schema `in_scope / injection / reason`; the question is wrapped in tags and declared data; a malformed reply is retried once, then allowed but flagged). It replaced a phrase list whose "act as" pattern refused a real question. Also: "evidence is data" prompt rule with delimited evidence blocks, weak-evidence abstain (cosine < 0.66), JSON-schema output with one repair attempt, citation check against the retrieved ids.
+
+### Results (job runs on `wb-ml-single`, October 2026)
+
+| | |
+|---|---|
+| Chunks / projects indexed | 50,000 / 453 (median 268 words per chunk) |
+| Retrieval, 40 LLM-generated questions | source project in top 5: 100%; exact source chunk in top 5: 87.5% vector, 90% hybrid; MRR (chunk) 0.58 vector → 0.74 hybrid |
+| Answers (Qwen 3.5, thinking off) | groundedness 1.00, relevance 1.00, citation validity 100%, correctness: LLM judge 0.675; after human review of the 13 answers it rejected, 38/40 fully correct (95%) and 40/40 at least partly correct (the judge was too strict, and one reference was wrong) |
+| Guardrails | 5/5 unanswerable abstained, 5/5 off-topic/injection refused, 0/5 planted-instruction attacks succeeded, 0/40 false refusals with the LLM input guard (was 1/40 with the phrase list), 7/7 tricky guard cases; guard adds ~0.6 s median per question |
+| Thinking on vs off | no quality gain (correctness 0.675 in both), ~8x latency (22 s vs 2.8 s median) |
+| Flagged-project notes | 20 notes, judged grounded 17/20, guidelines 20/20 |
+
+Caveats: the answerable questions are LLM-generated from single chunks; only the judge's rejections were human-reviewed, not the answers it accepted; 50 questions give ±10–15 points of uncertainty; SHAP explains the *model*, not what causes project failure.
+
 ## Repository layout
 
 ```
 notebooks/
-  00_README.py               results, theory map, limitations (Databricks notebook)
+  00_README.py               results, notebook guide, limitations (Databricks notebook)
   00_setup.py                Unity Catalog schemas + volume, smoke test
   01_ingest.py               IEG ratings, Projects API, indicators → bronze
   01b_ingest_docs.py         document catalog, leakage-safe selection, parallel download
@@ -145,6 +197,12 @@ notebooks/
   06_compare.py              ablation with paired bootstrap
   07_deploy.py               UC registry @champion, batch scoring
   08_results_report.py       EDA + results: 14 charts and REPORT.md
+  09_rag_index.py            LLM extension: chunking, embeddings, Vector Search + FAISS indexes
+  10_rag_assistant.py        RAG assistant with input guard, citations, MLflow tracing
+  11_rag_evaluation.py       retrieval metrics, LLM judges, code checks, human review
+  12_flagged_project_notes.py  cited notes for the 20 riskiest active projects
+  rag_common.py              shared search/embedding helpers (used by 09-12)
+  rag_assistant_core.py      guardrails, prompts and ask() (used by 10-12)
 executed/                    the same notebooks as .ipynb WITH the outputs of their final job runs
 results/
   REPORT.md                  generated report (tables + charts)
@@ -175,10 +233,7 @@ databricks.yml               Asset Bundle: 9-task workflow (schedule paused)
 
 ## Next steps
 
-**1. Extend with LLMs (the documents are already chunked and embedded in `silver.doc_chunks` / `silver.doc_embeddings`)**
-- **LLM risk-factor extraction → new features.** Have an LLM read each pre-approval document and return structured JSON: stated overall risk rating, top named risks, implementing-agency capacity concerns, number of components, design complexity. These become new columns in `gold.project_features`, tested with the same ablation and paired bootstrap. Still leakage-safe, because only pre-approval documents are read. Roughly 8,300 documents × ~6k tokens ≈ 50M input tokens, which is cheap with a small model via batch inference (`ai_query`).
-- **RAG question-answering over the documents.** "Which approved projects describe weak procurement capacity in fragile states?" Retrieve from the existing chunk embeddings (Databricks AI Search, formerly Vector Search, or FAISS), answer only from retrieved passages, cite the document and project ID, and say "not found" when there's no evidence. Evaluate groundedness with MLflow's GenAI evaluation (LLM-as-judge) on a small labelled question set.
-- **Reviewer notes for flagged projects.** For each High-risk active project, an LLM turns its top SHAP drivers plus the extracted risks into a 3-sentence "why this was flagged" note, so the score comes with a reason a person can check.
+**1. LLM risk-factor extraction → new features.** The RAG assistant and the flagged-project notes are built (see [LLM extension](#llm-extension-rag-assistant-over-project-documents)). The remaining idea: have an LLM read each pre-approval document and return structured JSON (stated overall risk rating, top named risks, implementing-agency capacity concerns, number of components, design complexity). These become new columns in `gold.project_features`, tested with the same ablation and paired bootstrap. Still leakage-safe, because only pre-approval documents are read. Roughly 8,300 documents × ~6k tokens ≈ 50M input tokens, which is cheap with a small model via batch inference (`ai_query`).
 
 **2. Use the pre-1995 history (~5,500 more rated projects).** The ratings, project data and macro data are already in bronze; only gold filters them out. Run it as an experiment, not a default: add FY1975–1994 to training (structured features first, since there are no governance scores before 1996 and the scanned documents are noisy), keep the FY2012+ test set unchanged, and keep it only if test AUC improves. Older projects may teach patterns that no longer hold. An LLM or vision-model re-read of the scanned documents could then make their text usable too.
 
@@ -193,6 +248,6 @@ databricks.yml               Asset Bundle: 9-task workflow (schedule paused)
 
 ## Tech stack
 
-Azure Databricks · Delta Lake · Unity Catalog (volumes, feature table, model registry) · MLflow 3 (nested runs, pyfunc) · XGBoost 3 · Optuna · scikit-learn · sentence-transformers (all-MiniLM-L6-v2) · SHAP (TreeSHAP) · Databricks Workflows · Databricks Asset Bundles
+Azure Databricks · Delta Lake · Unity Catalog (volumes, feature table, model registry) · MLflow 3 (nested runs, pyfunc) · XGBoost 3 · Optuna · scikit-learn · sentence-transformers (all-MiniLM-L6-v2) · SHAP (TreeSHAP) · Databricks Workflows · Databricks Asset Bundles · Mosaic AI Vector Search · Foundation Model APIs (Qwen 3.5, Llama 3.3, gpt-oss) · FAISS · MLflow Tracing and GenAI evaluation
 
 Data © World Bank Group, licensed CC BY 4.0.

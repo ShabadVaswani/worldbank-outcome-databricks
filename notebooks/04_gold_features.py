@@ -5,10 +5,10 @@
 # MAGIC Joins everything into `gold.project_features` (primary key `project_id`, so Unity Catalog treats it as a **feature table**):
 # MAGIC
 # MAGIC ```
-# MAGIC silver.projects ─┬─ silver.labels            (label, if rated)
-# MAGIC                  ├─ silver.country_year      (year BEFORE approval)  ← leakage rule
-# MAGIC                  ├─ silver.doc_text_features (pre-approval doc)      ← leakage rule
-# MAGIC                  └─ silver.doc_embeddings → PCA(20), fit on TRAIN only
+# MAGIC silver.projects --+-- silver.labels            (label, if rated)
+# MAGIC                   |-- silver.country_year      (year BEFORE approval)  <-- leakage rule
+# MAGIC                   |-- silver.doc_text_features (pre-approval doc)      <-- leakage rule
+# MAGIC                   +-- silver.doc_embeddings -> PCA(20), fit on TRAIN only
 # MAGIC ```
 # MAGIC
 # MAGIC Each row gets a `split`:
